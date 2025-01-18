@@ -4,7 +4,6 @@ import random
 import math
 import copy
 import numpy as np
-from numpy import array
 from sensor_msgs.msg import NavSatFix
 from sensor_msgs.msg import Imu
 from geometry_msgs.msg import Twist
@@ -136,6 +135,7 @@ def main():
     rospy.init_node('rrt_planner')
     pub = rospy.Publisher('cmd_vel', Twist, queue_size=10)
 
+    # Engelleri yükle
     engeller = []
     with open("engeller.txt", "r") as f:
         for _ in range(8):
@@ -144,7 +144,8 @@ def main():
             size = int(f.readline().strip())
             engeller.append((x, y, size))
 
-    rrt = RRT(start=[0, 0], goal=[1, 7], rand_area=[-15, 15], engeller=engeller, buffer=0.5)
+    # RRT algoritmasını başlat
+    rrt = RRT(start=[0, 0], goal=[4, 3], rand_area=[-15, 15], engeller=engeller, buffer=0.5)
     path = rrt.planning()
 
     if show_animation:
@@ -153,30 +154,57 @@ def main():
         plt.grid(True)
         plt.show()
 
-    rate = rospy.Rate(1)
+    # Robotun hareketi için başlangıç parametreleri
+    robot_x, robot_y = 0.0, 0.0
+    robot_theta = 0.0
+    rate = rospy.Rate(10)
     twist = Twist()
-    for point in path[::-1]:
-        dx = point[0] - rrt.end.x
-        dy = point[1] - rrt.end.y
-        distance_to_goal = math.sqrt(dx ** 2 + dy ** 2)
 
-        if distance_to_goal <= 0.5: 
-            print("Hedefe ulaşıldı, robot durdu.")
-            twist.linear.x = 0.0
-            twist.angular.z = 0.0
+    for goal_x, goal_y in path[::-1]:  # Yolu ters sırayla takip et
+        while True:
+            # Hedefe olan mesafe ve açı farkı
+            dx = goal_x - robot_x
+            dy = goal_y - robot_y
+            distance_to_goal = math.sqrt(dx ** 2 + dy ** 2)
+            goal_theta = math.atan2(dy, dx)
+            angle_diff = goal_theta - robot_theta
+            angle_diff = math.atan2(math.sin(angle_diff), math.cos(angle_diff))  # Normalize edilmiş açı
+
+            # Hedefe ulaşıldıysa bir sonraki noktaya geç
+            if distance_to_goal < 0.1:
+                print(f"Hedefe ulaşıldı: ({goal_x}, {goal_y})")
+                break
+
+            # Hız kontrolü
+            twist.linear.x = min(0.2, distance_to_goal)  # Doğrusal hız
+            twist.angular.z = 1.5 * angle_diff          # Açısal hız
+
+            # Eğer açı farkı çok büyükse (90 derece veya daha fazla), sadece dön
+            if abs(angle_diff) > math.pi / 4:
+                twist.linear.x = 0.0
+
+            # Komutları yayınla
             pub.publish(twist)
-            break
 
-        twist.linear.x = 0.7
-        twist.angular.z = 0.3
-        pub.publish(twist)
-        rospy.sleep(1)
-        print(f"Moving to: {point}")
+            # Robotun pozisyonunu güncelle
+            dt = 0.1  # Zaman adımı
+            robot_x += twist.linear.x * math.cos(robot_theta) * dt
+            robot_y += twist.linear.x * math.sin(robot_theta) * dt
+            robot_theta += twist.angular.z * dt
 
+            # Robotun yol üzerindeki hareketini çizin
+            if show_animation:
+                rrt.draw_graph()
+                plt.plot([x for (x, y) in path], [y for (x, y) in path], '-r')
+                plt.plot(robot_x, robot_y, "ob")
+                plt.pause(0.01)
+
+    # Robotu durdur
     twist.linear.x = 0.0
     twist.angular.z = 0.0
     pub.publish(twist)
+    print("Tüm hedeflere ulaşıldı, robot durdu.")
+
 
 if __name__ == '__main__':
     main()
-
